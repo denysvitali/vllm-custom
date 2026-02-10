@@ -1,0 +1,105 @@
+name: Build vLLM AVX2 Docker Image
+
+on:
+  schedule:
+    - cron: '0 2 * * *'  # Daily at 2 AM UTC
+  workflow_dispatch:
+    inputs:
+      vllm_version:
+        description: 'vLLM version/tag to build (default: latest)'
+        required: false
+        type: string
+        default: ''
+  push:
+    branches: [ main, master ]
+    paths:
+      - '.github/workflows/build-avx2.yml'
+      - 'README.md'
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Log in to GHCR
+      uses: docker/login-action@v3
+      with:
+        registry: ghcr.io
+        username: ${{ github.repository_owner }}
+        password: ${{ secrets.REGISTRY_TOKEN || secrets.GITHUB_TOKEN }}
+
+    - name: Determine vLLM version
+      id: vllm-version
+      run: |
+        # If version is provided via workflow dispatch, use it
+        if [ -n "${{ github.event.inputs.vllm_version }}" ]; then
+          VERSION="${{ github.event.inputs.vllm_version }}"
+        else
+          # Fetch latest release from GitHub API
+          echo "Fetching latest vLLM release..."
+          LATEST_RESPONSE=$(curl -s https://api.github.com/repos/vllm-project/vllm/releases/latest)
+
+          # Check for rate limiting or errors
+          if echo "$LATEST_RESPONSE" | jq -e '.message' | grep -q 'API rate limit exceeded'; then
+            echo "Warning: GitHub API rate limit exceeded. Using fallback version v0.15.1"
+            VERSION="v0.15.1"
+          elif echo "$LATEST_RESPONSE" | jq -e '.tag_name' > /dev/null; then
+            VERSION=$(echo "$LATEST_RESPONSE" | jq -r '.tag_name')
+          else
+            echo "Warning: Could not fetch latest release. Using fallback version v0.15.1"
+            VERSION="v0.15.1"
+          fi
+        fi
+
+        # Remove 'v' prefix if present for tagging consistency
+        if [[ $VERSION == v* ]]; then
+          VERSION_NUM=${VERSION#v}
+        else
+          VERSION_NUM=$VERSION
+        fi
+
+        echo "vllm_version=$VERSION" >> $GITHUB_OUTPUT
+        echo "vllm_version_num=$VERSION_NUM" >> $GITHUB_OUTPUT
+        echo "Using vLLM version: $VERSION"
+
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: https://github.com/vllm-project/vllm.git#${{ steps.vllm-version.outputs.vllm_version }}
+        file: docker/Dockerfile.cpu
+        build-args: |
+          VLLM_CPU_DISABLE_AVX512=true
+        target: vllm-openai
+        platforms: linux/amd64
+        push: true
+        tags: |
+          ghcr.io/${{ github.repository_owner }}/vllm-custom:${{ steps.vllm-version.outputs.vllm_version }}
+          ghcr.io/${{ github.repository_owner }}/vllm-custom:${{ steps.vllm-version.outputs.vllm_version }}-avx2
+          ghcr.io/${{ github.repository_owner }}/vllm-custom:latest-avx2
+
+    - name: Generate build summary
+      run: |
+        echo "## Build Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "✅ Successfully built and pushed vLLM AVX2 image" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Version:** ${{ steps.vllm-version.outputs.vllm_version }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Tags pushed:**" >> $GITHUB_STEP_SUMMARY
+        echo "- \`ghcr.io/${{ github.repository_owner }}/vllm-custom:${{ steps.vllm-version.outputs.vllm_version }}\` (plain version)" >> $GITHUB_STEP_SUMMARY
+        echo "- \`ghcr.io/${{ github.repository_owner }}/vllm-custom:${{ steps.vllm-version.outputs.vllm_version }}-avx2\` (AVX2-specific)" >> $GITHUB_STEP_SUMMARY
+        echo "- \`ghcr.io/${{ github.repository_owner }}/vllm-custom:latest-avx2\` (latest)" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Pull command (recommended):**" >> $GITHUB_STEP_SUMMARY
+        echo " \`docker pull ghcr.io/${{ github.repository_owner }}/vllm-custom:${{ steps.vllm-version.outputs.vllm_version }}-avx2\`" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Note:** This image is built for AVX2 CPUs only. Tensor parallelism (-tp&gt;1) is not supported."
