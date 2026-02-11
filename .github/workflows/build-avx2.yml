@@ -14,6 +14,7 @@ on:
     branches: [ main, master ]
     paths:
       - '.github/workflows/build-avx2.yml'
+      - 'Dockerfile'
       - 'README.md'
 
 jobs:
@@ -71,14 +72,25 @@ jobs:
         echo "vllm_version_num=$VERSION_NUM" >> $GITHUB_OUTPUT
         echo "Using vLLM version: $VERSION"
 
+    - name: Clone vLLM repository
+      run: |
+        git clone --branch ${{ steps.vllm-version.outputs.vllm_version }} \
+          --depth 1 \
+          https://github.com/vllm-project/vllm.git vllm-source
+
+    - name: Prepare build context
+      run: |
+        # Copy our custom Dockerfile into the vLLM source directory
+        cp Dockerfile vllm-source/
+
     - name: Build and push Docker image
       uses: docker/build-push-action@v5
       with:
-        context: https://github.com/vllm-project/vllm.git#${{ steps.vllm-version.outputs.vllm_version }}
-        file: docker/Dockerfile.cpu
+        context: vllm-source
+        file: vllm-source/Dockerfile
         build-args: |
           VLLM_CPU_DISABLE_AVX512=true
-          SETUPTOOLS_SCM_PRETEND_VERSION_FOR_VLLM=${{ steps.vllm-version.outputs.vllm_version_num }}
+          VLLM_VERSION=${{ steps.vllm-version.outputs.vllm_version_num }}
         target: vllm-openai
         platforms: linux/amd64
         push: true
