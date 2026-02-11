@@ -78,6 +78,7 @@ jobs:
         file: docker/Dockerfile.cpu
         build-args: |
           VLLM_CPU_DISABLE_AVX512=true
+          SETUPTOOLS_SCM_PRETEND_VERSION_FOR_VLLM=${{ steps.vllm-version.outputs.vllm_version_num }}
         target: vllm-openai
         platforms: linux/amd64
         push: true
