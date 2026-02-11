@@ -103,7 +103,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 FROM base AS vllm-openai
 
-COPY --from=vllm-build /workspace/vllm/dist /workspace/dist
+COPY --from=vllm-build /workspace/dist /workspace/dist
 
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv pip install /workspace/dist/*.whl
